@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "hybrid-analysis": {
+      "command": "poetry",
+      "args": ["run", "python", "-m", "mcp_hybrid_analysis.server"],
+      "env": {
+        "HYBRID_ANALYSIS_KEY": "your_api_key_here",
+        "MCP_TRANSPORT": "stdio"
+      },
+      "cwd": "/absolute/path/to/mcp-hybrid-analysis"
+    }
+  }
+}
