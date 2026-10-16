@@ -33,6 +33,7 @@ async def make_api_request(
     params: dict[str, Any] | None = None,
     data: dict[str, Any] | None = None,
     files: dict[str, Any] | None = None,
+    json_body: dict[str, Any] | None = None,
     error_context: str = "",
     return_headers: bool = False,
 ) -> dict[str, Any] | tuple[dict[str, Any], httpx.Headers]:
@@ -46,6 +47,7 @@ async def make_api_request(
         params: URL query parameters
         data: Form data for POST requests
         files: Files for multipart upload
+        json_body: JSON-serializable body for requests
         error_context: Additional context for error messages
         return_headers: If True, returns tuple of (response_json, headers)
 
@@ -60,6 +62,7 @@ async def make_api_request(
             params=params,
             data=data,
             files=files,
+            json=json_body,
             headers={"api-key": settings.HYBRID_ANALYSIS_KEY},
         )
         response.raise_for_status()
