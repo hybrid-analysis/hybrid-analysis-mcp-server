@@ -4,7 +4,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
 import httpx
@@ -75,6 +75,13 @@ This MCP server provides malware analysis and threat intelligence capabilities.
 - See antivirus detections from 50+ engines
 - Supported: EXE, DLL, PDF, DOCX, XLSX, ZIP, RAR, APK, scripts, and more
 
+**Quick Scan Files** (Fast triage):
+- Instant hash reputation lookup against known malware databases
+- CrowdStrike ML static analysis
+- MetaDefender multi-engine scan
+- Results in seconds (no sandbox execution)
+- Use for triage before full sandbox analysis
+
 **Check File Hashes**:
 - Look up if a file hash is known malware (MD5/SHA1/SHA256/SHA512)
 - Get previous analysis reports without re-submitting files
@@ -87,15 +94,25 @@ This MCP server provides malware analysis and threat intelligence capabilities.
 
 ## Common Workflows
 
-### "Analyze this suspicious file"
+### "Quick check this file" (fastest - seconds)
+1. quick_scan_file(file_path="/path/to/file.exe")
+2. If finished=false, poll with get_quick_scan(id)
+3. Review ML verdict and AV detections
+
+### "Analyze this suspicious file" (deep analysis - minutes)
 1. submit_file(file_path="/path/to/file.exe", environment_id=110)
 2. wait_for_report(job_id, return_summary=True) - auto-polls for 5-10 minutes
 3. Review verdict, threat score, and behavioral indicators
 
-### "Is this file known malware?" (faster)
-1. Calculate hash: sha256sum filename
-2. search_by_hash(hash_value)
-3. Review existing reports instantly
+### "Is this hash known malware?" (hash lookup - recommended)
+1. get_labs_sample_overview(sha256) - aggregated view across all sandbox runs
+2. Review verdict, AV detections, and list of sandbox job_ids
+3. ONLY IF you need sandbox-run-specific details (network traffic, processes from a particular environment):
+   - get_report_summary(job_id) for quick summary of that run
+
+### "Search for related samples"
+1. search_by_hash(hash_value) - finds all reports for a hash (any format: MD5/SHA1/SHA256)
+2. Or search_labs(query) for advanced queries like 'tag:"ransomware"'
 
 ### "Check if this link is safe"
 1. submit_url(url="https://...", environment_id=110)
@@ -116,7 +133,8 @@ This MCP server provides malware analysis and threat intelligence capabilities.
 - 300: Linux Ubuntu 64-bit
 
 ## Important Notes
-- Analysis takes 5-10 minutes (sandbox execution time)
+- Quick scan: instant (seconds), no behavioral analysis
+- Full sandbox: 5-10 minutes, complete behavioral analysis
 - Always use wait_for_report after submission (saves API calls vs manual polling)
 - Free tier has daily quota limits
 - Files are executed in isolated sandbox - safe for malware analysis
@@ -143,6 +161,11 @@ async def get_when_to_use() -> str:
 - File extensions: ".exe", ".dll", ".pdf", ".docx", ".apk", ".bin"
 - "what does this file do", "file behavior"
 
+**Quick Scan Keywords** (use quick_scan_file for fast triage):
+- "quick scan", "quick check", "fast scan", "triage"
+- "just check if it's malicious", "quick verdict"
+- When scanning many files and need fast results
+
 **Hash Lookups**:
 - "check this hash", "is [hash] known malware", "hash reputation"
 - "lookup [hash]", "search for [hash]"
@@ -164,16 +187,29 @@ async def get_when_to_use() -> str:
 - Malware research: "analyze this specimen", "reverse this sample"
 
 
+## Choosing the Right Tool
+
+| Need | Tool | Time |
+|------|------|------|
+| Fast verdict, many files | quick_scan_file | Seconds |
+| Deep behavioral analysis | submit_file | 5-10 min |
+| Hash lookup (aggregated overview) | get_labs_sample_overview | Instant |
+| Hash search (find reports) | search_by_hash | Instant |
+| Sandbox-run-specific details | get_report_summary | Instant |
+| Website/URL check | submit_url | 5-10 min |
+
 ## Examples
 
-✅ "Analyze the suspicious.exe file" → Use submit_file
+✅ "Quick scan this file" → Use quick_scan_file
+✅ "Triage these 10 samples" → Use quick_scan_file for each (fast)
+✅ "Analyze the suspicious.exe file" → Use submit_file (deep analysis)
 ✅ "Check if malware_sample.bin is dangerous" → Use submit_file
 ✅ "Take a look at case_newfam files and analyze them" → Use submit_file for each
 ✅ "Is this download link safe?" → Use submit_url
-✅ "What does unknown_binary do?" → Use submit_file
-✅ "Scan these 5 samples" → Loop submit_file for each
-✅ "Check hash 44d88612fea8a8f36de82e1278abb02f" → Use search_by_hash
-✅ "Is file abc123... known malware?" → Use search_by_hash
+✅ "What does unknown_binary do?" → Use submit_file (behavioral analysis)
+✅ "What's known about this SHA256?" → Use get_labs_sample_overview (aggregated view first)
+✅ "Check hash 44d88612fea8a8f36de82e1278abb02f" → Use search_by_hash or get_labs_sample_overview
+✅ "Show me network traffic from that analysis" → Use get_report_summary(job_id) for sandbox-specific data
 ✅ "Give me an overview of the malware.exe behavior" → Use submit_file + wait_for_report
 
 """
@@ -208,7 +244,7 @@ async def validate_api_key(ctx: Context) -> dict[str, Any]:
 
     if error := request_error(result):
         return error
-    
+
     # Filter out sensitive data before returning
     filtered_result = {
         "status": "valid",
@@ -250,7 +286,6 @@ async def validate_api_key(ctx: Context) -> dict[str, Any]:
     return filtered_result
 
 
-
 # ============================================================================
 # Search Tools
 # ============================================================================
@@ -262,13 +297,15 @@ async def search_by_hash(
     ctx: Context,
 ) -> dict[str, Any]:
     """
-    Search for malware samples by file hash. Look up if a file has been analyzed before.
+    Search for malware samples by file hash (MD5, SHA1, SHA512 - or SHA256 when you need raw report list).
 
-    Use this tool when you need to:
-    - Check if a file hash is known malware
-    - Look up previous analysis reports for a file
+    **For SHA256 hashes, prefer get_labs_sample_overview** - it provides aggregated verdicts,
+    threat scores, and AV detection summaries across all sandbox runs.
+
+    Use this tool (search_by_hash) when you need to:
+    - Look up MD5, SHA1, or SHA512 hashes (get_labs_sample_overview only supports SHA256)
+    - Get the raw list of all detonation reports for a hash
     - Verify if a file has been seen before
-    - Get threat intelligence on a specific file hash
 
     Accepts any hash format: MD5 (32 chars), SHA1 (40 chars), SHA256 (64 chars), or SHA512 (128 chars).
     Returns all associated detonation reports and analysis history for the given hash.
@@ -396,8 +433,10 @@ async def get_report_summary(
     ctx: Context,
 ) -> dict[str, Any]:
     """
-    Get a summary of an analysis report including verdict, threat score, AV detections, and key findings.
-    This is useful for quickly checking the analysis results without downloading the full report.
+    Get a summary of a specific sandbox run by its job_id.
+
+    This returns sandbox-run-specific data: verdict, threat score, AV detections for ONE execution.
+    If you have a SHA256 hash and want aggregated data across all runs, use get_labs_sample_overview first.
 
     IMPORTANT: This only works when analysis is complete (state = SUCCESS).
     Use get_report_state or wait_for_report first to ensure the report is ready.
@@ -419,36 +458,6 @@ async def get_report_summary(
 
 
 @mcp.tool
-async def get_full_report(
-    report_id: Annotated[str, Field(description="Report ID in 'jobId' format")],
-    ctx: Context,
-) -> dict[str, Any]:
-    """
-    Get the complete analysis report in JSON format with all behavioral data, network traffic, screenshots,
-    dropped files, memory dumps, and detailed analysis results. This returns the full detailed report.
-
-    IMPORTANT: This only works when analysis is complete (state = SUCCESS).
-    Use get_report_state or wait_for_report first to ensure the report is ready.
-    Calling this while analysis is in progress will result in an error and waste API quota.
-
-    Note: Full reports can be large (several MB). Use get_report_summary for quick overview.
-    """
-    if error := validate_report_id(report_id):
-        return error
-
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
-    report_id_encoded = quote(report_id.strip(), safe="")
-    result = await make_api_request(
-        http, "GET", f"/report/{report_id_encoded}/report/json", error_context="getting full report"
-    )
-
-    if error := request_error(result):
-        return _add_incomplete_analysis_note(error)
-
-    return result
-
-
-@mcp.tool
 async def get_report_state(
     report_id: Annotated[str, Field(description="Report ID in 'jobId' format")],
     ctx: Context,
@@ -458,7 +467,7 @@ async def get_report_state(
 
     Returns state like: IN_QUEUE, IN_PROGRESS, SUCCESS, ERROR, etc.
 
-    IMPORTANT: Only fetch reports (get_report_summary or get_full_report) when state is 'SUCCESS'.
+    IMPORTANT: Only fetch reports (get_report_summary) when state is 'SUCCESS'.
     For IN_QUEUE or IN_PROGRESS states, analysis is still running - wait before fetching reports.
 
     Typical analysis time: 5-10 minutes depending on file complexity and queue depth.
@@ -488,9 +497,7 @@ async def get_report_state(
             "or use wait_for_report tool for automatic polling."
         )
     elif state == "SUCCESS":
-        result["guidance"] = (
-            "Analysis complete! You can now fetch the report using get_report_summary or get_full_report."
-        )
+        result["guidance"] = "Analysis complete! You can now fetch the report using get_report_summary."
     elif state == "ERROR":
         result["guidance"] = (
             "Analysis failed. Check the error details and consider resubmitting with different parameters."
@@ -677,14 +684,24 @@ def _add_submission_note(error: dict[str, Any]) -> dict[str, Any]:
 @mcp.tool
 async def submit_file(
     ctx: Context,
-    file_path: Annotated[str, Field(description="Absolute path to the suspicious file to scan (supports executables, documents, archives, APKs, etc.)")],
+    file_path: Annotated[
+        str,
+        Field(
+            description="Absolute path to the suspicious file to scan (supports executables, documents, archives, APKs, etc.)"
+        ),
+    ],
     environment_id: Annotated[
         int,
         Field(
             description="Sandbox environment - 100: Windows 7 32-bit, 110: Windows 7 64-bit (recommended for most files), 120: Windows 10 64-bit, 200: Android, 300: Linux Ubuntu 64-bit"
         ),
     ],
-    comment: Annotated[str | None, Field(description="Optional comment about the submission (WARNING: publicly visible on hybrid-analysis.com - do not include sensitive information)")] = None,
+    comment: Annotated[
+        str | None,
+        Field(
+            description="Optional comment about the submission (WARNING: publicly visible on hybrid-analysis.com - do not include sensitive information)"
+        ),
+    ] = None,
     custom_cmd_line: Annotated[str | None, Field(description="Optional command line arguments")] = None,
     document_password: Annotated[str | None, Field(description="Password for protected Office/PDF documents")] = None,
     submit_name: Annotated[
@@ -774,7 +791,12 @@ async def submit_url(
             description="Sandbox environment - 100: Windows 7 32-bit, 110: Windows 7 64-bit (recommended), 120: Windows 10 64-bit"
         ),
     ],
-    comment: Annotated[str | None, Field(description="Optional comment about the submission (WARNING: publicly visible on hybrid-analysis.com - do not include sensitive information)")] = None,
+    comment: Annotated[
+        str | None,
+        Field(
+            description="Optional comment about the submission (WARNING: publicly visible on hybrid-analysis.com - do not include sensitive information)"
+        ),
+    ] = None,
 ) -> dict[str, Any]:
     """
     Submit a URL for malware analysis and threat scanning. Analyzes both websites and downloadable files.
@@ -823,6 +845,389 @@ async def submit_url(
         return _add_submission_note(error)
 
     return result
+
+
+# ============================================================================
+# Quick Scan Tools - Instant lightweight scanning (no sandbox execution)
+# ============================================================================
+
+
+@mcp.tool
+async def quick_scan_file(
+    ctx: Context,
+    file_path: Annotated[str, Field(description="Absolute path to the file to quick scan")],
+    comment: Annotated[str | None, Field(description="Optional comment about the scan")] = None,
+    submit_name: Annotated[
+        str | None, Field(description="Optional filename override (use if file has no extension)")
+    ] = None,
+) -> dict[str, Any]:
+    """
+    Quick scan a file for malware without full sandbox execution. Results are returned within seconds.
+
+    Use this tool when you need to:
+    - Get a fast verdict on a file (instant hash reputation + ML/multi-engine scan)
+    - Triage files before deciding whether to run full sandbox analysis (submit_file)
+    - Check many files quickly against known malware databases
+
+    Runs all available scanners: hash lookups, CrowdStrike ML, and MetaDefender multi-engine scan.
+    Unlike submit_file, no behavioral analysis is performed and no job needs to be waited on.
+    If the response has finished=false, poll for the final result with get_quick_scan(id).
+
+    For deep behavioral analysis (processes, network traffic, registry changes) use submit_file instead.
+    """
+    if not os.path.isfile(file_path):
+        return {
+            "error": "File not found",
+            "details": f"The file '{file_path}' does not exist or is not accessible",
+            "hint": "Provide an absolute path to the file you want to scan",
+        }
+
+    try:
+        # Read file off the event loop; samples can be large
+        file_content = await asyncio.to_thread(_read_file_bytes, file_path)
+
+        data: dict[str, Any] = {"scan_type": "all"}
+        if comment:
+            data["comment"] = comment
+        if submit_name:
+            data["submit_name"] = submit_name
+
+        files = {"file": (os.path.basename(file_path), file_content, "application/octet-stream")}
+
+        http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+        result = await make_api_request(
+            http, "POST", "/quick-scan/file", data=data, files=files, error_context="during quick scan"
+        )
+
+        if error := request_error(result):
+            return _add_submission_note(error)
+
+        if not result.get("finished") and result.get("id"):
+            result["hint"] = "Scan not finished yet - poll for the result with get_quick_scan(id)"
+
+        return result
+
+    except FileNotFoundError:
+        return {"error": "File not found", "details": f"Could not read file: {file_path}"}
+    except PermissionError:
+        return {"error": "Permission denied", "details": f"No permission to read file: {file_path}"}
+    except Exception as e:
+        logger.error(f"Unexpected error reading file: {e}")
+        return {"error": "File read error", "details": str(e)}
+
+
+@mcp.tool
+async def get_quick_scan(
+    ctx: Context,
+    quick_scan_id: Annotated[
+        str, Field(description="Quick scan ID returned by quick_scan_file (the 'id' field of its response)")
+    ],
+) -> dict[str, Any]:
+    """
+    Retrieve the result of a quick scan started with quick_scan_file.
+
+    Use this when quick_scan_file returned finished=false - some scanners need extra time.
+    When the response has finished=true, the scan is complete and the verdicts are final.
+    """
+    validation_error = validate_report_id(quick_scan_id)
+    if validation_error:
+        return validation_error
+
+    encoded_id = quote(quick_scan_id.strip(), safe="")
+    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    result = await make_api_request(
+        http, "GET", f"/quick-scan/{encoded_id}", error_context="fetching quick scan result"
+    )
+
+    if error := request_error(result):
+        if "403" in str(error.get("error")):
+            error["note"] = "Use validate_api_key tool to test your API key."
+        return error
+
+    return result
+
+
+# ============================================================================
+# Labs Tools - Hybrid Analysis Labs API (base: /api/labs)
+# YARA hunting, sample overview and free-form search. Same API key as v2 API.
+# ============================================================================
+
+
+def _labs_url(path: str) -> str:
+    """Build an absolute URL for the Labs API (separate base from the v2 API)."""
+    return f"{settings.HYBRID_ANALYSIS_LABS_API_URL}{path}"
+
+
+@mcp.tool
+async def search_labs(
+    ctx: Context,
+    query: Annotated[
+        str,
+        Field(
+            description="Search query string. Values should be wrapped in double quotes, e.g. 'filename:\"invoice.exe\"' or 'tag:\"ransomware\"'. "
+            "Supports field queries similar to the Hybrid Analysis web search"
+        ),
+    ],
+    page: Annotated[int, Field(description="Page number to display (1-based)")] = 1,
+    size: Annotated[int, Field(description="Number of results per page (default 50)")] = 50,
+    date_from: Annotated[
+        str | None, Field(description="Start of date range to search from (inclusive), YYYY-MM-DD")
+    ] = None,
+    date_to: Annotated[str | None, Field(description="End of date range to search to (inclusive), YYYY-MM-DD")] = None,
+) -> dict[str, Any]:
+    """
+    Run a free-form search query against Hybrid Analysis samples.
+
+    Use this tool when you need to:
+    - Search the sample collection by filename, tag, verdict or other attributes
+    - Find samples matching a date range
+
+    Different from search_by_terms (v2 API): this hits the search endpoint.
+    For large result sets the query may run asynchronously - use get_labs_search_results(query_id) then.
+    """
+    if not query or not query.strip():
+        return {"error": "Invalid query", "details": "Query string cannot be empty"}
+
+    for label, value in (("date_from", date_from), ("date_to", date_to)):
+        if value:
+            validation_error = validate_date_format(value)
+            if validation_error:
+                validation_error["details"] = f"{label}: {validation_error['details']}"
+                return validation_error
+
+    body: dict[str, Any] = {"query": query.strip(), "page": page, "size": size}
+    if date_from:
+        body["date_from"] = date_from.strip()
+    if date_to:
+        body["date_to"] = date_to.strip()
+
+    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    result = await make_api_request(
+        http, "POST", _labs_url("/search/query/run"), json_body=body, error_context="running labs search"
+    )
+
+    if not result.get("error") and result.get("id"):
+        result["hint"] = "Query is running asynchronously - fetch its results with get_labs_search_results(id)"
+
+    return result
+
+
+@mcp.tool
+async def get_labs_search_results(
+    ctx: Context,
+    query_id: Annotated[str, Field(description="Query ID returned by search_labs (the 'id' field of its response)")],
+) -> dict[str, Any]:
+    """
+    Retrieve results of an asynchronous Labs search query started with search_labs.
+    """
+    validation_error = validate_report_id(query_id)
+    if validation_error:
+        return validation_error
+
+    encoded_id = quote(query_id.strip(), safe="")
+    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    return await make_api_request(
+        http, "GET", _labs_url(f"/search/query/{encoded_id}/results"), error_context="fetching labs search results"
+    )
+
+
+@mcp.tool
+async def get_labs_sample_overview(
+    ctx: Context,
+    sha256: Annotated[str, Field(description="SHA256 hash of the sample (64 hex characters)")],
+) -> dict[str, Any]:
+    """
+    Get the aggregated overview for a sample by its SHA256 hash.
+
+    This is the RECOMMENDED first step when investigating a known hash. The overview contains:
+    - Verdict and threat score aggregated across all sandbox runs
+    - AV detection summary
+    - List of all sandbox job_ids with their environments and verdicts
+
+    Use this tool when you need to:
+    - Quickly look up what Hybrid Analysis knows about a file hash
+    - Get a summary before deciding if deeper analysis is needed
+    - Find job_ids for specific sandbox runs
+
+    Only use get_report_summary if you need sandbox-run-specific details
+    (e.g., network traffic from a particular environment, specific behavioral indicators).
+    """
+    validation_error = validate_hash(sha256)
+    if validation_error:
+        return validation_error
+
+    sha256_clean = sha256.strip().lower()
+    if len(sha256_clean) != 64:
+        return {"error": "Invalid sha256", "details": "overview requires a SHA256 hash (64 hex characters)"}
+
+    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    return await make_api_request(
+        http, "GET", _labs_url(f"/sample/{sha256_clean}/overview"), error_context="fetching sample overview"
+    )
+
+
+@mcp.tool
+async def get_yara_matches(
+    ctx: Context,
+    items_count: Annotated[int | None, Field(description="Maximum number of matches to return")] = None,
+    search_after: Annotated[
+        str | None, Field(description="Pagination cursor from a previous response to fetch older matches")
+    ] = None,
+) -> dict[str, Any]:
+    """
+    List recent YARA hunting rule matches (samples that matched your YARA hunting rules).
+
+    Use this tool when you need to:
+    - See which recent samples triggered your YARA hunting rules
+    - Page through the match history (use search_after from the previous response)
+    """
+    params: dict[str, Any] = {}
+    if items_count is not None:
+        params["items_count"] = items_count
+    if search_after:
+        params["search_after"] = search_after.strip()
+
+    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    return await make_api_request(
+        http, "GET", _labs_url("/hunting/matches/recent"), params=params, error_context="fetching YARA matches"
+    )
+
+
+YARA_RULE_STATUS = Literal["active", "paused"]
+
+
+@mcp.tool
+async def list_yara_rules(
+    ctx: Context,
+    search: Annotated[str | None, Field(description="Filter rules by name/identifier")] = None,
+    threat_category: Annotated[list[str] | None, Field(description="Filter by threat categories (repeatable)")] = None,
+    status: Annotated[YARA_RULE_STATUS | None, Field(description="Filter by rule status")] = None,
+) -> dict[str, Any]:
+    """
+    List your YARA hunting rules on Hybrid Analysis.
+    """
+    params: dict[str, Any] = {}
+    if search:
+        params["search"] = search.strip()
+    if threat_category:
+        params["threat_category"] = threat_category
+    if status:
+        params["status"] = status
+
+    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    return await make_api_request(
+        http, "GET", _labs_url("/hunting/yara-rules"), params=params, error_context="listing YARA rules"
+    )
+
+
+@mcp.tool
+async def get_yara_rule(
+    ctx: Context,
+    rule_id: Annotated[str, Field(description="ID of the YARA hunting rule")],
+) -> dict[str, Any]:
+    """
+    Fetch a single YARA hunting rule by ID (use list_yara_rules to find IDs).
+    """
+    validation_error = validate_report_id(rule_id)
+    if validation_error:
+        return validation_error
+
+    encoded_id = quote(rule_id.strip(), safe="")
+    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    return await make_api_request(
+        http, "GET", _labs_url(f"/hunting/yara-rules/{encoded_id}"), error_context="fetching YARA rule"
+    )
+
+
+@mcp.tool
+async def create_yara_rule(
+    ctx: Context,
+    identifier: Annotated[str, Field(description="Unique name of the rule (required)")],
+    threat_categories: Annotated[list[str], Field(description="Threat categories the rule targets (at least one required)")],
+    rule: Annotated[str, Field(description="YARA rule source code (required)")],
+    active: Annotated[bool, Field(description="Whether the rule is active and hunting")] = True,
+    daily_notifications_limit: Annotated[
+        int | None, Field(description="Maximum number of notifications per day")
+    ] = None,
+) -> dict[str, Any]:
+    """
+    Create a YARA hunting rule that continuously matches new samples on Hybrid Analysis.
+    View matches with get_yara_matches.
+    """
+    body: dict[str, Any] = {
+        "identifier": identifier.strip(),
+        "threat_categories": threat_categories,
+        "rule": rule,
+        "active": active,
+    }
+    if daily_notifications_limit is not None:
+        body["daily_notifications_limit"] = daily_notifications_limit
+
+    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    return await make_api_request(
+        http, "POST", _labs_url("/hunting/yara-rules"), json_body=body, error_context="creating YARA rule"
+    )
+
+
+@mcp.tool
+async def update_yara_rule(
+    ctx: Context,
+    rule_id: Annotated[str, Field(description="ID of the YARA hunting rule to update")],
+    identifier: Annotated[str | None, Field(description="New unique name of the rule")] = None,
+    threat_categories: Annotated[list[str] | None, Field(description="New threat categories")] = None,
+    rule: Annotated[str | None, Field(description="New YARA rule source code")] = None,
+    active: Annotated[bool | None, Field(description="Activate (true) or pause (false) the rule")] = None,
+    daily_notifications_limit: Annotated[int | None, Field(description="Max notifications per day")] = None,
+    reset_counter: Annotated[bool, Field(description="When true, resets the all-time matches counter")] = False,
+) -> dict[str, Any]:
+    """
+    Update an existing YARA hunting rule (only fields you provide are changed).
+    """
+    validation_error = validate_report_id(rule_id)
+    if validation_error:
+        return validation_error
+
+    body: dict[str, Any] = {}
+    if identifier is not None:
+        body["identifier"] = identifier.strip()
+    if threat_categories is not None:
+        body["threat_categories"] = threat_categories
+    if rule is not None:
+        body["rule"] = rule
+    if active is not None:
+        body["active"] = active
+    if daily_notifications_limit is not None:
+        body["daily_notifications_limit"] = daily_notifications_limit
+    if reset_counter:
+        body["reset_counter"] = True
+
+    if not body:
+        return {"error": "Nothing to update", "details": "Provide at least one field to change"}
+
+    encoded_id = quote(rule_id.strip(), safe="")
+    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    return await make_api_request(
+        http, "POST", _labs_url(f"/hunting/yara-rules/{encoded_id}"), json_body=body, error_context="updating YARA rule"
+    )
+
+
+@mcp.tool
+async def delete_yara_rule(
+    ctx: Context,
+    rule_id: Annotated[str, Field(description="ID of the YARA hunting rule to delete")],
+) -> dict[str, Any]:
+    """
+    Delete a YARA hunting rule. This is irreversible - the rule and its notifications are removed.
+    """
+    validation_error = validate_report_id(rule_id)
+    if validation_error:
+        return validation_error
+
+    encoded_id = quote(rule_id.strip(), safe="")
+    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    return await make_api_request(
+        http, "DELETE", _labs_url(f"/hunting/yara-rules/{encoded_id}"), error_context="deleting YARA rule"
+    )
 
 
 if __name__ == "__main__":
