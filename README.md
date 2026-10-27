@@ -18,7 +18,6 @@
 **Reports**
 - `get_report_state` - Check analysis status (IN_QUEUE → IN_PROGRESS → SUCCESS)
 - `get_report_summary` - Verdict, threat score, AV detections
-- `get_full_report` - Complete JSON report with network traffic, dropped files, memory dumps
 - `wait_for_report` - Poll with backoff until analysis completes
 
 **Submission**
@@ -80,10 +79,7 @@ submit_file(file_path="/tmp/suspicious.exe", environment_id=110)  # Windows 7 x6
 
 # 2. Wait for completion (auto-polls with backoff)
 wait_for_report(report_id=job_id, max_wait_minutes=10, return_summary=True)
-# → Analysis typically takes 5-10 minutes
-
-# 3. Get full report when ready
-get_full_report(report_id=job_id)
+# → Analysis typically takes 5-10 minutes, returns summary when ready
 ```
 
 **Common environment IDs**: 100=Win7 32-bit, 110=Win7 64-bit, 120=Win10 64-bit, 200=Android, 300=Linux Ubuntu
