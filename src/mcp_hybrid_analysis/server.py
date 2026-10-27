@@ -237,7 +237,7 @@ async def validate_api_key(ctx: Context) -> dict[str, Any]:
     2. Open your profile
     3. Navigate to the "API Key" tab
     """
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     result, headers = await make_api_request(
         http, "GET", "/key/current", error_context="validating API key", return_headers=True
     )
@@ -319,7 +319,7 @@ async def search_by_hash(
     if error := validate_hash(hash_value):
         return error
 
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     hash_clean = hash_value.strip().lower()
 
     result = await make_api_request(
@@ -397,7 +397,7 @@ async def search_by_terms(
     if date_to and (error := validate_date_format(date_to, "date_to")):
         return error
 
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     result = await make_api_request(
         http, "POST", "/search/terms", data=filtered_data, error_context="during terms search"
     )
@@ -445,7 +445,7 @@ async def get_report_summary(
     if error := validate_report_id(report_id):
         return error
 
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     report_id_encoded = quote(report_id.strip(), safe="")
     result = await make_api_request(
         http, "GET", f"/report/{report_id_encoded}/summary", error_context="getting report summary"
@@ -476,7 +476,7 @@ async def get_report_state(
     if error := validate_report_id(report_id):
         return error
 
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     report_id_encoded = quote(report_id.strip(), safe="")
     result = await make_api_request(
         http, "GET", f"/report/{report_id_encoded}/state", error_context="getting report state"
@@ -545,7 +545,7 @@ async def wait_for_report(
     if error := validate_report_id(report_id):
         return error
 
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
 
     # Validate max_wait_minutes
     max_wait_minutes = max(1, min(15, max_wait_minutes))
@@ -762,7 +762,7 @@ async def submit_file(
         # Prepare file for upload
         files = {"file": (os.path.basename(file_path), file_content, "application/octet-stream")}
 
-        http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+        http: httpx.AsyncClient = ctx.lifespan_context.http_client
         result = await make_api_request(
             http, "POST", "/submit/file", data=data, files=files, error_context="during file submission"
         )
@@ -838,7 +838,7 @@ async def submit_url(
     if comment:
         data["comment"] = comment
 
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     result = await make_api_request(http, "POST", "/submit/url", data=data, error_context="during URL submission")
 
     if error := request_error(result):
@@ -894,7 +894,7 @@ async def quick_scan_file(
 
         files = {"file": (os.path.basename(file_path), file_content, "application/octet-stream")}
 
-        http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+        http: httpx.AsyncClient = ctx.lifespan_context.http_client
         result = await make_api_request(
             http, "POST", "/quick-scan/file", data=data, files=files, error_context="during quick scan"
         )
@@ -934,7 +934,7 @@ async def get_quick_scan(
         return validation_error
 
     encoded_id = quote(quick_scan_id.strip(), safe="")
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     result = await make_api_request(
         http, "GET", f"/quick-scan/{encoded_id}", error_context="fetching quick scan result"
     )
@@ -1001,7 +1001,7 @@ async def search_labs(
     if date_to:
         body["date_to"] = date_to.strip()
 
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     result = await make_api_request(
         http, "POST", _labs_url("/search/query/run"), json_body=body, error_context="running labs search"
     )
@@ -1025,7 +1025,7 @@ async def get_labs_search_results(
         return validation_error
 
     encoded_id = quote(query_id.strip(), safe="")
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     return await make_api_request(
         http, "GET", _labs_url(f"/search/query/{encoded_id}/results"), error_context="fetching labs search results"
     )
@@ -1060,7 +1060,7 @@ async def get_labs_sample_overview(
     if len(sha256_clean) != 64:
         return {"error": "Invalid sha256", "details": "overview requires a SHA256 hash (64 hex characters)"}
 
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     return await make_api_request(
         http, "GET", _labs_url(f"/sample/{sha256_clean}/overview"), error_context="fetching sample overview"
     )
@@ -1087,7 +1087,7 @@ async def get_yara_matches(
     if search_after:
         params["search_after"] = search_after.strip()
 
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     return await make_api_request(
         http, "GET", _labs_url("/hunting/matches/recent"), params=params, error_context="fetching YARA matches"
     )
@@ -1114,7 +1114,7 @@ async def list_yara_rules(
     if status:
         params["status"] = status
 
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     return await make_api_request(
         http, "GET", _labs_url("/hunting/yara-rules"), params=params, error_context="listing YARA rules"
     )
@@ -1133,7 +1133,7 @@ async def get_yara_rule(
         return validation_error
 
     encoded_id = quote(rule_id.strip(), safe="")
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     return await make_api_request(
         http, "GET", _labs_url(f"/hunting/yara-rules/{encoded_id}"), error_context="fetching YARA rule"
     )
@@ -1163,7 +1163,7 @@ async def create_yara_rule(
     if daily_notifications_limit is not None:
         body["daily_notifications_limit"] = daily_notifications_limit
 
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     return await make_api_request(
         http, "POST", _labs_url("/hunting/yara-rules"), json_body=body, error_context="creating YARA rule"
     )
@@ -1205,7 +1205,7 @@ async def update_yara_rule(
         return {"error": "Nothing to update", "details": "Provide at least one field to change"}
 
     encoded_id = quote(rule_id.strip(), safe="")
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     return await make_api_request(
         http, "POST", _labs_url(f"/hunting/yara-rules/{encoded_id}"), json_body=body, error_context="updating YARA rule"
     )
@@ -1224,7 +1224,7 @@ async def delete_yara_rule(
         return validation_error
 
     encoded_id = quote(rule_id.strip(), safe="")
-    http: httpx.AsyncClient = ctx.request_context.lifespan_context.http_client
+    http: httpx.AsyncClient = ctx.lifespan_context.http_client
     return await make_api_request(
         http, "DELETE", _labs_url(f"/hunting/yara-rules/{encoded_id}"), error_context="deleting YARA rule"
     )
@@ -1233,7 +1233,8 @@ async def delete_yara_rule(
 if __name__ == "__main__":
     if settings.MCP_TRANSPORT == "stdio":
         # stdio transport doesn't accept host/port/path parameters
-        mcp.run(transport="stdio")
+        # Banner disabled to avoid corrupting JSON-RPC output
+        mcp.run(transport="stdio", show_banner=False)
     else:
         # HTTP-based transports (streamable-http, sse) need host/port/path
         http_host, _, http_port = settings.HTTP_LISTEN.rpartition(":")
